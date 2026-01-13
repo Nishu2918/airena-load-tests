@@ -417,7 +417,6 @@ export function HackathonLanding({ onNavigate }: HackathonLandingProps) {
       </section>
 
 
-
       {/* Footer */}
       <footer className="py-6 px-6 border-t border-slate-800">
         <div className="container mx-auto text-center text-white">
