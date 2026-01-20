@@ -1,9 +1,27 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../common/prisma/prisma.service';
 
 @Injectable()
 export class ReviewsService {
-  constructor(private prisma: PrismaService) {}
-  // TODO: Implement review logic
-}
+  // Simple placeholder service
+  // In a real implementation, you would implement review logic here
+  
+  async create(reviewData: any) {
+    return { id: `review-${Date.now()}`, ...reviewData };
+  }
 
+  async findAll() {
+    return [];
+  }
+
+  async findOne(id: string) {
+    return null;
+  }
+
+  async update(id: string, updateData: any) {
+    return null;
+  }
+
+  async remove(id: string) {
+    return { message: 'Review deleted successfully' };
+  }
+}

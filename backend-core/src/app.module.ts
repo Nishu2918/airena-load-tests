@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HttpModule } from '@nestjs/axios';
-import { PrismaModule } from './common/prisma/prisma.module';
+import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { HackathonsModule } from './hackathons/hackathons.module';
@@ -22,6 +22,9 @@ import { AIModule } from './ai/ai.module';
       envFilePath: ['.env.local', '.env'],
     }),
     
+    // Database
+    PrismaModule,
+    
     // HTTP Client
     HttpModule,
     
@@ -32,9 +35,6 @@ import { AIModule } from './ai/ai.module';
         limit: 100, // 100 requests per minute
       },
     ]),
-    
-    // Database
-    PrismaModule,
     
     // Feature modules
     AuthModule,

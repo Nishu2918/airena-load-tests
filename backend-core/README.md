@@ -8,7 +8,7 @@ This is the core backend service for the GCC FUSION AI-Powered Hackathon Platfor
 
 - **Framework**: NestJS 10
 - **Language**: TypeScript
-- **Database**: PostgreSQL with Prisma ORM
+- **Database**: In-memory storage (replace with your preferred database)
 - **Cache/Queue**: Redis (ioredis)
 - **File Storage**: Azure Blob Storage (Primary)
 - **Authentication**: JWT with Passport
@@ -18,8 +18,8 @@ This is the core backend service for the GCC FUSION AI-Powered Hackathon Platfor
 
 ```
 backend-core/
-├── prisma/
-│   └── schema.prisma          # Database schema
+├── database/
+│   └── schema.database          # Database schema
 ├── src/
 │   ├── auth/                  # Authentication & RBAC
 │   │   ├── dto/
@@ -42,7 +42,7 @@ backend-core/
 │   │   ├── filters/
 │   │   ├── interceptors/
 │   │   ├── pipes/
-│   │   └── prisma/
+│   │   └── database/
 │   ├── app.module.ts
 │   └── main.ts
 ├── .env.example
@@ -74,14 +74,14 @@ cp .env.example .env
 ### Database Setup
 
 ```bash
-# Generate Prisma Client
-npm run prisma:generate
+# Generate in-memory storage Client
+npm run database:generate
 
 # Run migrations
-npm run prisma:migrate
+npm run database:migrate
 
-# (Optional) Open Prisma Studio
-npm run prisma:studio
+# (Optional) Open in-memory storage Studio
+npm run database:studio
 ```
 
 ### Running the Application
@@ -231,7 +231,7 @@ Use the `@Roles()` decorator to protect routes:
 
 ## 🗄️ Database
 
-Prisma is used for database management. Key models:
+in-memory storage is used for database management. Key models:
 
 - `User` - User accounts with roles
 - `Hackathon` - Hackathon events
@@ -261,7 +261,7 @@ npm run test:cov
 ## 📚 Additional Resources
 
 - [NestJS Documentation](https://docs.nestjs.com/)
-- [Prisma Documentation](https://www.prisma.io/docs)
+- [in-memory storage Documentation](https://www.database.io/docs)
 - [JWT Authentication](https://docs.nestjs.com/security/authentication)
 
 ## 🛠️ Development

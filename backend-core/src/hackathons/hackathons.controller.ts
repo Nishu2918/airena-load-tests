@@ -38,6 +38,15 @@ export class HackathonsController {
     return this.hackathonsService.findAll({ status, category, search });
   }
 
+  @Get('my-hackathons')
+  @UseGuards(JwtAuthGuard)
+  async getMyHackathons(@CurrentUser() user: any) {
+    console.log('🔍 Getting my hackathons for user:', user.id);
+    const result = await this.hackathonsService.getMyHackathons(user.id);
+    console.log('📋 My hackathons result:', { count: result.length });
+    return result;
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.hackathonsService.findOne(id);
@@ -45,14 +54,29 @@ export class HackathonsController {
 
   @Get(':id/participants')
   @UseGuards(JwtAuthGuard)
-  getParticipants(@Param('id') id: string) {
-    return this.hackathonsService.getParticipants(id);
+  async getParticipants(@Param('id') id: string) {
+    console.log('🔍 Getting participants for hackathon:', id);
+    const result = await this.hackathonsService.getParticipants(id);
+    console.log('📋 Participants result:', { count: result.length, participants: result.map(p => ({ email: p.user.email, userId: p.user.id })) });
+    return result;
   }
 
   @Post(':id/register')
   @UseGuards(JwtAuthGuard)
-  registerForHackathon(@CurrentUser() user: any, @Param('id') id: string) {
-    return this.hackathonsService.registerForHackathon(user.id, id);
+  async registerForHackathon(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() registrationData?: {
+      teamName?: string;
+      teamDescription?: string;
+      selectedTrack?: number;
+      teamMembers?: Array<{ name: string; email: string; role: string }>;
+    },
+  ) {
+    console.log('🔄 Registration request:', { hackathonId: id, userId: user.id, registrationData });
+    const result = await this.hackathonsService.registerForHackathon(user.id, id, registrationData);
+    console.log('✅ Registration result:', result);
+    return result;
   }
 
   @Patch(':id')

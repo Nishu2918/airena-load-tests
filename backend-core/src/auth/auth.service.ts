@@ -1,22 +1,46 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../common/prisma/prisma.service';
+import * as bcrypt from 'bcryptjs';
+import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { AuthResponseDto } from './dto/auth-response.dto';
-import { UserRole, UserStatus } from '../common/constants/enums';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
 
-  async register(registerDto: RegisterDto): Promise<AuthResponseDto> {
+  async onModuleInit() {
+    // Initialize with a default admin user
+    await this.initializeDefaultUser();
+  }
+
+  private async initializeDefaultUser() {
+    const adminExists = await this.prisma.user.findUnique({
+      where: { email: 'admin@gcc-fusion.com' },
+    });
+
+    if (!adminExists) {
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      await this.prisma.user.create({
+        data: {
+          email: 'admin@gcc-fusion.com',
+          passwordHash: hashedPassword,
+          firstName: 'Admin',
+          lastName: 'User',
+          role: 'ADMIN',
+          status: 'ACTIVE',
+        },
+      });
+    }
+  }
+
+  async register(registerDto: RegisterDto) {
     const { email, password, firstName, lastName, role } = registerDto;
 
     // Check if user already exists
@@ -31,40 +55,50 @@ export class AuthService {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await this.prisma.user.create({
+    // Create new user with provided role or default to PARTICIPANT
+    const newUser = await this.prisma.user.create({
       data: {
         email,
         passwordHash,
         firstName,
         lastName,
-        role: role || UserRole.PARTICIPANT,
-        status: UserStatus.ACTIVE, // Set to ACTIVE for testing purposes
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        status: true,
-        avatarUrl: true,
+        role: role || 'PARTICIPANT',
+        status: 'ACTIVE',
       },
     });
 
     // Generate JWT token
-    const accessToken = this.generateToken(user.id, user.email);
+    const payload = { sub: newUser.id, email: newUser.email, role: newUser.role };
+    const accessToken = this.jwtService.sign(payload);
 
     return {
       accessToken,
-      user,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        role: newUser.role,
+        status: newUser.status,
+      },
     };
   }
 
-  async login(loginDto: LoginDto): Promise<AuthResponseDto> {
-    const user = await this.validateUser(loginDto.email, loginDto.password);
-    
+  async login(loginDto: LoginDto) {
+    const { email, password } = loginDto;
+
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
     if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -75,7 +109,8 @@ export class AuthService {
     });
 
     // Generate JWT token
-    const accessToken = this.generateToken(user.id, user.email);
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    const accessToken = this.jwtService.sign(payload);
 
     return {
       accessToken,
@@ -86,7 +121,6 @@ export class AuthService {
         lastName: user.lastName,
         role: user.role,
         status: user.status,
-        avatarUrl: user.avatarUrl,
       },
     };
   }
@@ -96,48 +130,76 @@ export class AuthService {
       where: { email },
     });
 
-    if (!user) {
-      return null;
+    if (user && await bcrypt.compare(password, user.passwordHash)) {
+      const { passwordHash, ...result } = user;
+      return result;
     }
-
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-
-    if (!isPasswordValid) {
-      return null;
-    }
-
-    // Check if user is active
-    if (user.status !== UserStatus.ACTIVE && user.status !== UserStatus.PENDING_VERIFICATION) {
-      throw new UnauthorizedException('Account is suspended or inactive');
-    }
-
-    return user;
+    return null;
   }
 
-  private generateToken(userId: string, email: string): string {
-    const payload = { sub: userId, email };
-    return this.jwtService.sign(payload, {
-      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN', '7d'),
+  async findById(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
     });
   }
 
-  async verifyToken(token: string): Promise<any> {
-    try {
-      return this.jwtService.verify(token);
-    } catch (error) {
-      throw new UnauthorizedException('Invalid token');
+  async updateProfile(userId: string, updateDto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
     }
+
+    // Update user fields
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: updateDto,
+    });
+
+    return {
+      id: updatedUser.id,
+      email: updatedUser.email,
+      firstName: updatedUser.firstName,
+      lastName: updatedUser.lastName,
+      role: updatedUser.role,
+      status: updatedUser.status,
+      avatarUrl: updatedUser.avatarUrl,
+      bio: updatedUser.bio,
+      githubUrl: updatedUser.githubUrl,
+      linkedinUrl: updatedUser.linkedinUrl,
+      portfolioUrl: updatedUser.portfolioUrl,
+    };
   }
 
-  async updateProfile(userId: string, updateDto: { role?: string }) {
-    const updateData: any = {};
-    if (updateDto.role) {
-      updateData.role = updateDto.role;
+  async getCurrentUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
     }
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: updateData,
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      status: user.status,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
+      githubUrl: user.githubUrl,
+      linkedinUrl: user.linkedinUrl,
+      portfolioUrl: user.portfolioUrl,
+    };
+  }
+
+  // Debug method to view all users (remove in production)
+  async getAllUsers() {
+    const users = await this.prisma.user.findMany({
       select: {
         id: true,
         email: true,
@@ -145,11 +207,10 @@ export class AuthService {
         lastName: true,
         role: true,
         status: true,
-        avatarUrl: true,
+        createdAt: true,
+        lastLoginAt: true,
       },
     });
-
-    return user;
+    return users;
   }
 }
-

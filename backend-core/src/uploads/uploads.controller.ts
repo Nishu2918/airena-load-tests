@@ -1,18 +1,25 @@
 import {
   Controller,
   Post,
+  Get,
+  Param,
+  Res,
   UseGuards,
   UseInterceptors,
   UploadedFile,
   UploadedFiles,
   Body,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UploadsService } from './uploads.service';
 import { memoryStorage } from 'multer';
+import * as path from 'path';
+import * as fs from 'fs';
 
 @Controller('uploads')
 @UseGuards(JwtAuthGuard)
@@ -120,5 +127,80 @@ export class UploadsController {
     return {
       storage: this.uploadsService.getStorageInfo(),
     };
+  }
+
+  /**
+   * Download/serve local files
+   * GET /api/v1/uploads/:folder/:userId/:filename
+   */
+  @Get(':folder/:userId/:filename')
+  async downloadFile(
+    @Param('folder') folder: string,
+    @Param('userId') userId: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const filePath = path.join(process.cwd(), 'uploads', folder, userId, filename);
+      
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException('File not found');
+      }
+
+      // Get file stats
+      const stats = fs.statSync(filePath);
+      
+      // Set appropriate headers
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', stats.size);
+      
+      // Stream the file
+      const fileStream = fs.createReadStream(filePath);
+      fileStream.pipe(res);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to download file: ${error.message}`);
+    }
+  }
+
+  /**
+   * Download/serve local files (alternative path without userId)
+   * GET /api/v1/uploads/:folder/:filename
+   */
+  @Get(':folder/:filename')
+  async downloadFileSimple(
+    @Param('folder') folder: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const filePath = path.join(process.cwd(), 'uploads', folder, filename);
+      
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        throw new NotFoundException('File not found');
+      }
+
+      // Get file stats
+      const stats = fs.statSync(filePath);
+      
+      // Set appropriate headers
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', stats.size);
+      
+      // Stream the file
+      const fileStream = fs.createReadStream(filePath);
+      fileStream.pipe(res);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to download file: ${error.message}`);
+    }
   }
 }

@@ -37,7 +37,6 @@ export class SubmissionsController {
       console.log('✅ Submission created successfully:', {
         id: result.id,
         submitterId: result.submitterId,
-        submitterEmail: result.submitter?.email,
         hackathonId: result.hackathonId
       });
       

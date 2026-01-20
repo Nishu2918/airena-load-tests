@@ -4,99 +4,96 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
-import { PrismaService } from '../common/prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateHackathonDto } from './dto/create-hackathon.dto';
 import { UpdateHackathonDto } from './dto/update-hackathon.dto';
-import { HackathonStatus } from '../common/constants/enums';
 
 @Injectable()
 export class HackathonsService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: string, createDto: CreateHackathonDto) {
-    // Validate dates
-    this.validateDates(createDto);
-
     const hackathon = await this.prisma.hackathon.create({
       data: {
-        ...createDto,
-        registrationStart: new Date(createDto.registrationStart),
-        registrationEnd: new Date(createDto.registrationEnd),
+        title: createDto.title,
+        description: createDto.description || '',
+        type: createDto.allowIndividual ? 'INDIVIDUAL' : 'TEAM',
+        status: 'UPCOMING',
+        minTeamSize: createDto.minTeamSize || 1,
+        maxTeamSize: createDto.maxTeamSize || 5,
         startDate: new Date(createDto.startDate),
         endDate: new Date(createDto.endDate),
-        submissionDeadline: new Date(createDto.submissionDeadline),
-        requirements: typeof createDto.requirements === 'object' 
-          ? JSON.stringify(createDto.requirements) 
-          : createDto.requirements,
+        registrationDeadline: createDto.registrationEnd ? new Date(createDto.registrationEnd) : null,
         organizerId: userId,
-        status: HackathonStatus.DRAFT,
+        bannerUrl: createDto.bannerImageUrl,
+        location: createDto.venue,
+        isVirtual: createDto.isVirtual || false,
+        prizePool: createDto.prizeAmount ? `${createDto.prizeCurrency || 'USD'} ${createDto.prizeAmount}` : null,
       },
       include: {
         organizer: {
           select: {
             id: true,
+            email: true,
             firstName: true,
             lastName: true,
-            email: true,
           },
         },
       },
     });
 
+    // Create problem statement tracks if provided
+    if (createDto.problemStatementTracks && createDto.problemStatementTracks.length > 0) {
+      await Promise.all(
+        createDto.problemStatementTracks.map(track =>
+          this.prisma.hackathonProblemStatement.create({
+            data: {
+              hackathonId: hackathon.id,
+              uploadedById: userId,
+              trackNumber: track.trackNumber,
+              trackTitle: track.trackTitle,
+              fileName: track.fileName,
+              fileUrl: track.fileUrl,
+              fileType: track.fileType,
+              fileSize: track.fileSize,
+              description: track.description,
+            },
+          })
+        )
+      );
+    }
+
     return hackathon;
   }
 
-  async findAll(filters?: {
-    status?: string;
-    category?: string;
-    search?: string;
-  }) {
+  async findAll(filters?: { status?: string; category?: string; search?: string }) {
     const where: any = {};
 
     if (filters?.status) {
       where.status = filters.status;
     }
 
-    if (filters?.category) {
-      where.category = filters.category;
-    }
-
     if (filters?.search) {
       where.OR = [
-        { title: { contains: filters.search } },
-        { description: { contains: filters.search } },
+        { title: { contains: filters.search, mode: 'insensitive' } },
+        { description: { contains: filters.search, mode: 'insensitive' } },
       ];
     }
 
-    return this.prisma.hackathon.findMany({
+    const hackathons = await this.prisma.hackathon.findMany({
       where,
       include: {
         organizer: {
           select: {
             id: true,
+            email: true,
             firstName: true,
             lastName: true,
-            email: true,
-          },
-        },
-        teams: {
-          include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-              },
-            },
           },
         },
         _count: {
           select: {
+            participants: true,
             teams: true,
             submissions: true,
           },
@@ -106,6 +103,8 @@ export class HackathonsService {
         createdAt: 'desc',
       },
     });
+
+    return hackathons;
   }
 
   async findOne(id: string) {
@@ -115,41 +114,15 @@ export class HackathonsService {
         organizer: {
           select: {
             id: true,
+            email: true,
             firstName: true,
             lastName: true,
-            email: true,
           },
         },
-        teams: {
-          include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        submissions: {
-          include: {
-            submitter: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-              },
-            },
-          },
-        },
+        problemStatements: true,
         _count: {
           select: {
+            participants: true,
             teams: true,
             submissions: true,
           },
@@ -164,242 +137,37 @@ export class HackathonsService {
     return hackathon;
   }
 
-  async getParticipants(hackathonId: string) {
+  async update(userId: string, id: string, updateDto: UpdateHackathonDto) {
     const hackathon = await this.prisma.hackathon.findUnique({
-      where: { id: hackathonId },
-      include: {
-        participants: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                status: true,
-              },
-            },
-          },
-        },
-        submissions: {
-          include: {
-            submitter: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-              },
-            },
-          },
-        },
-        teams: {
-          include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+      where: { id },
     });
 
     if (!hackathon) {
       throw new NotFoundException('Hackathon not found');
     }
 
-    const participantsMap = new Map<string, any>();
-
-    // SOURCE 1: REGISTERED PARTICIPANTS (HackathonParticipant) - PRIMARY SOURCE
-    hackathon.participants.forEach((p) => {
-      participantsMap.set(p.user.id, {
-        id: p.user.id,
-        firstName: p.user.firstName,
-        lastName: p.user.lastName,
-        email: p.user.email,
-        registeredAt: p.joinedAt,
-        hasSubmission: false,
-        submissionId: null,
-      });
-    });
-
-    // SOURCE 2: TEAM MEMBERS - Add if not already in map
-    hackathon.teams.forEach((team) => {
-      team.members.forEach((member) => {
-        const userId = member.user.id;
-        if (!participantsMap.has(userId)) {
-          participantsMap.set(userId, {
-            id: userId,
-            firstName: member.user.firstName,
-            lastName: member.user.lastName,
-            email: member.user.email,
-            registeredAt: member.createdAt || new Date(),
-            hasSubmission: false,
-            submissionId: null,
-          });
-        }
-      });
-    });
-
-    // SOURCE 3: SUBMISSIONS - Add if not already in map, update if exists
-    hackathon.submissions.forEach((submission) => {
-      const userId = submission.submitter?.id;
-      if (!userId) return;
-
-      if (!participantsMap.has(userId)) {
-        // User submitted but not registered - add them
-        participantsMap.set(userId, {
-          id: userId,
-          firstName: submission.submitter.firstName,
-          lastName: submission.submitter.lastName,
-          email: submission.submitter.email,
-          registeredAt: submission.createdAt,
-          hasSubmission: true,
-          submissionId: submission.id,
-        });
-      } else {
-        // Update existing participant with submission info
-        const existing = participantsMap.get(userId);
-        existing.hasSubmission = true;
-        existing.submissionId = submission.id;
-      }
-    });
-
-    // Return exact shape as specified - NO FILTERING
-    const result = Array.from(participantsMap.values()).map((p) => ({
-      id: p.id,
-      firstName: p.firstName,
-      lastName: p.lastName,
-      email: p.email,
-      registeredAt: p.registeredAt,
-      hasSubmission: p.hasSubmission,
-      submissionId: p.submissionId,
-    }));
-
-    console.log(`✅ getParticipants(${hackathonId}): Returning ${result.length} participants`);
-    return result;
-  }
-
-  async registerForHackathon(userId: string, hackathonId: string) {
-    const hackathon = await this.findOne(hackathonId);
-
-    // Check if registration is open
-    const now = new Date();
-    if (now < hackathon.registrationStart || now > hackathon.registrationEnd) {
-      throw new BadRequestException('Registration is not open for this hackathon');
-    }
-
-    // Check if already registered
-    const existing = await this.prisma.hackathonParticipant.findUnique({
-      where: {
-        hackathonId_userId: {
-          hackathonId,
-          userId,
-        },
-      },
-    });
-
-    if (existing) {
-      console.log('ℹ️ User already registered:', { userId, hackathonId, participantId: existing.id });
-      return { success: true, message: 'You are already registered for this hackathon' };
-    }
-
-    // Create registration
-    try {
-      const participant = await this.prisma.hackathonParticipant.create({
-        data: {
-          hackathonId,
-          userId,
-        },
-      });
-      console.log('✅ Registration created successfully:', { 
-        participantId: participant.id, 
-        userId, 
-        hackathonId,
-        joinedAt: participant.joinedAt 
-      });
-      return { success: true, message: 'Successfully registered for hackathon' };
-    } catch (error: any) {
-      console.error('❌ Failed to create registration:', error);
-      throw new BadRequestException(`Failed to register: ${error.message}`);
-    }
-  }
-
-  async update(userId: string, id: string, updateDto: UpdateHackathonDto) {
-    const hackathon = await this.findOne(id);
-
-    // Check ownership - allow organizer to update their own hackathons
     if (hackathon.organizerId !== userId) {
       throw new ForbiddenException('You can only update your own hackathons');
-    }
-
-    console.log('✅ Update authorized - user is organizer of hackathon:', { userId, hackathonId: id, organizerId: hackathon.organizerId });
-
-    // Validate status transitions
-    if (updateDto.status && updateDto.status !== hackathon.status) {
-      this.validateStatusTransition(hackathon.status, updateDto.status);
-    }
-
-    // Validate dates if provided
-    if (updateDto.registrationStart || updateDto.registrationEnd) {
-      this.validateDates({
-        registrationStart: updateDto.registrationStart || hackathon.registrationStart.toISOString(),
-        registrationEnd: updateDto.registrationEnd || hackathon.registrationEnd.toISOString(),
-        startDate: updateDto.startDate || hackathon.startDate.toISOString(),
-        endDate: updateDto.endDate || hackathon.endDate.toISOString(),
-        submissionDeadline: updateDto.submissionDeadline || hackathon.submissionDeadline.toISOString(),
-      } as any);
-    }
-
-    const updateData: any = {
-      ...updateDto,
-    };
-
-    // Convert date strings to Date objects if present
-    if (updateDto.registrationStart) {
-      updateData.registrationStart = new Date(updateDto.registrationStart);
-    }
-    if (updateDto.registrationEnd) {
-      updateData.registrationEnd = new Date(updateDto.registrationEnd);
-    }
-    if (updateDto.startDate) {
-      updateData.startDate = new Date(updateDto.startDate);
-    }
-    if (updateDto.endDate) {
-      updateData.endDate = new Date(updateDto.endDate);
-    }
-    if (updateDto.submissionDeadline) {
-      updateData.submissionDeadline = new Date(updateDto.submissionDeadline);
-    }
-    if (updateDto.requirements) {
-      updateData.requirements = typeof updateDto.requirements === 'object'
-        ? JSON.stringify(updateDto.requirements)
-        : updateDto.requirements;
     }
 
     const updated = await this.prisma.hackathon.update({
       where: { id },
       data: {
-        ...updateData,
-        publishedAt: updateDto.status === HackathonStatus.PUBLISHED && !hackathon.publishedAt
-          ? new Date()
-          : hackathon.publishedAt,
+        ...(updateDto.title && { title: updateDto.title }),
+        ...(updateDto.description && { description: updateDto.description }),
+        ...(updateDto.startDate && { startDate: new Date(updateDto.startDate) }),
+        ...(updateDto.endDate && { endDate: new Date(updateDto.endDate) }),
+        ...(updateDto.bannerImageUrl !== undefined && { bannerUrl: updateDto.bannerImageUrl }),
+        ...(updateDto.venue !== undefined && { location: updateDto.venue }),
+        ...(updateDto.isVirtual !== undefined && { isVirtual: updateDto.isVirtual }),
       },
       include: {
         organizer: {
           select: {
             id: true,
+            email: true,
             firstName: true,
             lastName: true,
-            email: true,
           },
         },
       },
@@ -409,22 +177,16 @@ export class HackathonsService {
   }
 
   async remove(userId: string, id: string) {
-    const hackathon = await this.findOne(id);
+    const hackathon = await this.prisma.hackathon.findUnique({
+      where: { id },
+    });
+
+    if (!hackathon) {
+      throw new NotFoundException('Hackathon not found');
+    }
 
     if (hackathon.organizerId !== userId) {
       throw new ForbiddenException('You can only delete your own hackathons');
-    }
-
-    // Prevent deletion if hackathon has started
-    const startedStatuses: string[] = [
-      HackathonStatus.IN_PROGRESS,
-      HackathonStatus.SUBMISSION_OPEN,
-      HackathonStatus.SUBMISSION_CLOSED,
-      HackathonStatus.JUDGING,
-      HackathonStatus.COMPLETED,
-    ];
-    if (startedStatuses.includes(hackathon.status)) {
-      throw new BadRequestException('Cannot delete hackathon that has started');
     }
 
     await this.prisma.hackathon.delete({
@@ -434,30 +196,29 @@ export class HackathonsService {
     return { message: 'Hackathon deleted successfully' };
   }
 
-  async updateStatus(userId: string, id: string, newStatus: string) {
-    const hackathon = await this.findOne(id);
+  async publish(userId: string, id: string) {
+    const hackathon = await this.prisma.hackathon.findUnique({
+      where: { id },
+    });
 
-    if (hackathon.organizerId !== userId) {
-      throw new ForbiddenException('You can only update your own hackathons');
+    if (!hackathon) {
+      throw new NotFoundException('Hackathon not found');
     }
 
-    this.validateStatusTransition(hackathon.status, newStatus);
+    if (hackathon.organizerId !== userId) {
+      throw new ForbiddenException('You can only publish your own hackathons');
+    }
 
     const updated = await this.prisma.hackathon.update({
       where: { id },
-      data: {
-        status: newStatus,
-        publishedAt: newStatus === HackathonStatus.PUBLISHED && !hackathon.publishedAt
-          ? new Date()
-          : hackathon.publishedAt,
-      },
+      data: { status: 'LIVE' },
       include: {
         organizer: {
           select: {
             id: true,
+            email: true,
             firstName: true,
             lastName: true,
-            email: true,
           },
         },
       },
@@ -466,130 +227,228 @@ export class HackathonsService {
     return updated;
   }
 
-  // Event Lifecycle Management
-  async processLifecycleEvents() {
-    const now = new Date();
+  async registerForHackathon(
+    userId: string,
+    hackathonId: string,
+    registrationData?: {
+      teamName?: string;
+      teamDescription?: string;
+      teamMembers?: Array<{ name: string; email: string; role: string }>;
+      selectedTrack?: number;
+    },
+  ) {
+    console.log('🔄 Registration request:', { userId, hackathonId, registrationData });
+    
+    const hackathon = await this.prisma.hackathon.findUnique({
+      where: { id: hackathonId },
+    });
 
-    // Update hackathons based on current time
-    await this.prisma.hackathon.updateMany({
+    if (!hackathon) {
+      throw new NotFoundException('Hackathon not found');
+    }
+
+    // Check if already registered
+    const existing = await this.prisma.hackathonParticipant.findUnique({
       where: {
-        status: HackathonStatus.PUBLISHED,
-        registrationStart: { lte: now },
-        registrationEnd: { gte: now },
-      },
-      data: {
-        status: HackathonStatus.REGISTRATION_OPEN,
+        userId_hackathonId: {
+          userId,
+          hackathonId,
+        },
       },
     });
 
-    await this.prisma.hackathon.updateMany({
-      where: {
-        status: HackathonStatus.REGISTRATION_OPEN,
-        registrationEnd: { lt: now },
-      },
+    if (existing) {
+      throw new BadRequestException('You are already registered for this hackathon');
+    }
+
+    // If team registration (check if teamName is provided and not empty)
+    if (registrationData?.teamName && registrationData.teamName.trim()) {
+      console.log('✅ Creating team:', registrationData.teamName);
+      
+      // Create team
+      const team = await this.prisma.team.create({
+        data: {
+          name: registrationData.teamName,
+          description: registrationData.teamDescription || '',
+          hackathonId,
+          leaderId: userId,
+        },
+      });
+
+      console.log('✅ Team created:', team.id);
+
+      // Create participant record for team leader
+      const leaderParticipant = await this.prisma.hackathonParticipant.create({
+        data: {
+          userId,
+          hackathonId,
+          teamId: team.id,
+          role: 'LEADER',
+          selectedTrack: registrationData.selectedTrack,
+        },
+      });
+
+      console.log('✅ Team leader participant created:', leaderParticipant.id);
+
+      // Create participant records for team members
+      // Note: In a real app, you'd send invitations and create participants when they accept
+      // For now, we'll just store the emails in the team description or handle separately
+      
+      return {
+        success: true,
+        message: 'Successfully registered team for hackathon',
+        participant: leaderParticipant,
+        team,
+      };
+    }
+
+    console.log('✅ Creating individual participant');
+    
+    // Individual registration
+    const participant = await this.prisma.hackathonParticipant.create({
       data: {
-        status: HackathonStatus.REGISTRATION_CLOSED,
+        userId,
+        hackathonId,
+        role: 'MEMBER',
+        selectedTrack: registrationData?.selectedTrack,
+      },
+      include: {
+        hackathon: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
     });
 
-    await this.prisma.hackathon.updateMany({
-      where: {
-        status: HackathonStatus.REGISTRATION_CLOSED,
-        startDate: { lte: now },
-        endDate: { gte: now },
-      },
-      data: {
-        status: HackathonStatus.IN_PROGRESS,
-      },
-    });
+    console.log('✅ Individual participant created:', participant.id);
 
-    await this.prisma.hackathon.updateMany({
-      where: {
-        status: HackathonStatus.IN_PROGRESS,
-        submissionDeadline: { lte: now },
-      },
-      data: {
-        status: HackathonStatus.SUBMISSION_OPEN,
-      },
-    });
-
-    await this.prisma.hackathon.updateMany({
-      where: {
-        status: HackathonStatus.SUBMISSION_OPEN,
-        submissionDeadline: { lt: now },
-      },
-      data: {
-        status: HackathonStatus.SUBMISSION_CLOSED,
-      },
-    });
-  }
-
-  private validateDates(dto: CreateHackathonDto | any) {
-    const registrationStart = new Date(dto.registrationStart);
-    const registrationEnd = new Date(dto.registrationEnd);
-    const startDate = new Date(dto.startDate);
-    const endDate = new Date(dto.endDate);
-    const submissionDeadline = new Date(dto.submissionDeadline);
-
-    if (registrationEnd <= registrationStart) {
-      throw new BadRequestException('Registration end must be after registration start');
-    }
-
-    if (startDate < registrationEnd) {
-      throw new BadRequestException('Hackathon start must be after registration end');
-    }
-
-    if (endDate <= startDate) {
-      throw new BadRequestException('Hackathon end must be after start');
-    }
-
-    if (submissionDeadline > endDate) {
-      throw new BadRequestException('Submission deadline must be before or on hackathon end date');
-    }
-
-    if (submissionDeadline < startDate) {
-      throw new BadRequestException('Submission deadline must be after hackathon start');
-    }
-  }
-
-  private validateStatusTransition(currentStatus: string, newStatus: string) {
-    const validTransitions: Record<string, string[]> = {
-      [HackathonStatus.DRAFT]: [HackathonStatus.PUBLISHED, HackathonStatus.CANCELLED],
-      [HackathonStatus.PUBLISHED]: [
-        HackathonStatus.REGISTRATION_OPEN,
-        HackathonStatus.CANCELLED,
-        HackathonStatus.DRAFT,
-      ],
-      [HackathonStatus.REGISTRATION_OPEN]: [
-        HackathonStatus.REGISTRATION_CLOSED,
-        HackathonStatus.CANCELLED,
-      ],
-      [HackathonStatus.REGISTRATION_CLOSED]: [
-        HackathonStatus.IN_PROGRESS,
-        HackathonStatus.CANCELLED,
-      ],
-      [HackathonStatus.IN_PROGRESS]: [
-        HackathonStatus.SUBMISSION_OPEN,
-        HackathonStatus.CANCELLED,
-      ],
-      [HackathonStatus.SUBMISSION_OPEN]: [
-        HackathonStatus.SUBMISSION_CLOSED,
-        HackathonStatus.CANCELLED,
-      ],
-      [HackathonStatus.SUBMISSION_CLOSED]: [
-        HackathonStatus.JUDGING,
-        HackathonStatus.CANCELLED,
-      ],
-      [HackathonStatus.JUDGING]: [HackathonStatus.COMPLETED],
-      [HackathonStatus.COMPLETED]: [],
-      [HackathonStatus.CANCELLED]: [],
+    return {
+      success: true,
+      message: 'Successfully registered for hackathon',
+      participant,
     };
+  }
 
-    if (!validTransitions[currentStatus]?.includes(newStatus)) {
-      throw new BadRequestException(
-        `Invalid status transition from ${currentStatus} to ${newStatus}`,
-      );
+  async getMyHackathons(userId: string) {
+    // Get hackathons where user is a participant
+    const participations = await this.prisma.hackathonParticipant.findMany({
+      where: { userId },
+      include: {
+        hackathon: {
+          include: {
+            organizer: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            _count: {
+              select: {
+                participants: true,
+                teams: true,
+                submissions: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return participations.map(p => p.hackathon);
+  }
+
+  async getParticipants(hackathonId: string) {
+    const participants = await this.prisma.hackathonParticipant.findMany({
+      where: { hackathonId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+        team: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            createdAt: true,
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                    avatarUrl: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Check if participant has submitted
+    const participantsWithSubmission = await Promise.all(
+      participants.map(async (participant) => {
+        const submission = await this.prisma.submission.findFirst({
+          where: {
+            hackathonId,
+            OR: [
+              { participantId: participant.id },
+              { teamId: participant.teamId },
+            ],
+          },
+        });
+
+        return {
+          ...participant,
+          hasSubmission: !!submission,
+        };
+      }),
+    );
+
+    return participantsWithSubmission;
+  }
+
+  async updateStatus(userId: string, hackathonId: string, status: string) {
+    const hackathon = await this.prisma.hackathon.findUnique({
+      where: { id: hackathonId },
+    });
+
+    if (!hackathon) {
+      throw new NotFoundException('Hackathon not found');
     }
+
+    if (hackathon.organizerId !== userId) {
+      throw new ForbiddenException('You can only update your own hackathons');
+    }
+
+    const updated = await this.prisma.hackathon.update({
+      where: { id: hackathonId },
+      data: { status: status as any },
+      include: {
+        organizer: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    return updated;
   }
 }
-

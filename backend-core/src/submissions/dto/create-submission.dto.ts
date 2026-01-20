@@ -21,6 +21,10 @@ export class CreateSubmissionDto {
   @IsString()
   description: string;
 
+  @IsString()
+  @IsOptional()
+  techStack?: string;
+
   @IsUrl()
   @IsOptional()
   repositoryUrl?: string;

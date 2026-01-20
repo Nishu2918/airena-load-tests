@@ -1,315 +1,326 @@
-// Prisma Schema for GCC FUSION Hackathon Platform
-// Database: SQLite (for testing)
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 // ============================================
-// USER & AUTHENTICATION
+// ENUMS
 // ============================================
-// Note: SQLite doesn't support enums, using String instead
+
+enum HackathonType {
+  INDIVIDUAL
+  TEAM
+}
+
+enum HackathonStatus {
+  UPCOMING
+  LIVE
+  ENDED
+}
+
+enum ParticipantRole {
+  LEADER
+  MEMBER
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  ACCEPTED
+  REJECTED
+}
+
+// ============================================
+// USER MODEL (EXISTING - PRESERVED)
+// ============================================
 
 model User {
-  id            String      @id @default(uuid())
-  email         String      @unique
+  id            String    @id @default(uuid())
+  email         String    @unique
   passwordHash  String
   firstName     String
   lastName      String
-  role          String      @default("PARTICIPANT") // UserRole: PARTICIPANT, ORGANIZER, JUDGE, ADMIN
-  status        String      @default("PENDING_VERIFICATION") // UserStatus: ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION
+  role          String    @default("PARTICIPANT")
+  status        String    @default("ACTIVE")
   avatarUrl     String?
   bio           String?
   githubUrl     String?
   linkedinUrl   String?
   portfolioUrl  String?
-  
-  // Relations
-  teams         TeamMember[]
-  organizedHackathons Hackathon[] @relation("HackathonOrganizer")
-  submissions   Submission[]
-  reviews       Review[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  hackathonParticipants HackathonParticipant[]
-  
-  // Timestamps
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   lastLoginAt   DateTime?
-  
-  @@index([email])
-  @@index([role])
-  @@index([status])
+
+  // Relations
+  organizedHackathons       Hackathon[]              @relation("HackathonOrganizer")
+  participations            HackathonParticipant[]
+  ledTeams                  Team[]                   @relation("TeamLeader")
+  uploadedProblemStatements HackathonProblemStatement[]
+  reviews                   Review[]
+  notifications             Notification[]
+
+  @@map("users")
 }
 
 // ============================================
-// HACKATHON MANAGEMENT
+// HACKATHON MODEL (ROOT ENTITY)
 // ============================================
-// Note: SQLite doesn't support enums, using String instead
 
 model Hackathon {
-  id                String            @id @default(uuid())
-  title             String
-  description       String            // SQLite doesn't need @db.Text
-  category          String            // HackathonCategory: WEB_DEVELOPMENT, MOBILE_DEVELOPMENT, AI_ML, etc.
-  status            String            @default("DRAFT") // HackathonStatus: DRAFT, PUBLISHED, etc.
+  id              String          @id @default(uuid())
+  title           String
+  description     String
+  type            HackathonType   @default(TEAM)
+  status          HackathonStatus @default(UPCOMING)
   
-  // Organizer
-  organizerId       String
-  organizer         User              @relation("HackathonOrganizer", fields: [organizerId], references: [id])
+  // Configurable limits (NOT hardcoded)
+  minTeamSize     Int             @default(1)
+  maxTeamSize     Int             @default(5)
+  maxTeams        Int?            // Nullable - no limit if null
+  maxParticipants Int?            // Nullable - no limit if null
   
   // Dates
-  registrationStart DateTime
-  registrationEnd   DateTime
-  startDate         DateTime
-  endDate           DateTime
-  submissionDeadline DateTime
+  startDate       DateTime
+  endDate         DateTime
+  registrationDeadline DateTime?
   
-  // Prize & Requirements
-  prizeAmount       Float?
-  prizeCurrency     String?           @default("USD")
-  registrationFee   Float?            // Optional registration fee
-  requirements      String            // JSON stored as String: Structured requirements for AI matching
+  // Organizer
+  organizerId     String
+  organizer       User            @relation("HackathonOrganizer", fields: [organizerId], references: [id], onDelete: Cascade)
   
-  // Rules & Guidelines
-  rules             String            // SQLite doesn't need @db.Text
-  guidelines        String            // SQLite doesn't need @db.Text
+  // Metadata
+  bannerUrl       String?
+  location        String?
+  isVirtual       Boolean         @default(false)
+  prizePool       String?
   
-  // Media
-  bannerImageUrl    String?
-  logoImageUrl      String?
-  
-  // Team Settings
-  minTeamSize       Int               @default(1)
-  maxTeamSize       Int               @default(5)
-  allowIndividual   Boolean           @default(true)
-  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
   // Relations
-  teams             Team[]
-  submissions       Submission[]
-  notifications     Notification[]
-  participants      HackathonParticipant[]
-  
-  // Timestamps
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  publishedAt       DateTime?
-  
-  @@index([organizerId])
-  @@index([status])
-  @@index([category])
-  @@index([startDate])
+  participants    HackathonParticipant[]
+  teams           Team[]
+  submissions     Submission[]
+  problemStatements HackathonProblemStatement[]
+  reviews         Review[]
+  notifications   Notification[]
+
+  @@map("hackathons")
 }
 
 // ============================================
-// TEAM MANAGEMENT
-// ============================================
-// Note: SQLite doesn't support enums, using String instead
-
-model Team {
-  id            String        @id @default(uuid())
-  name          String
-  hackathonId   String
-  hackathon     Hackathon     @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
-  status        String        @default("PENDING") // TeamStatus: PENDING, ACTIVE, DISBANDED
-  
-  // Relations
-  members       TeamMember[]
-  submissions   Submission[]
-  
-  // Timestamps
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  
-  @@unique([hackathonId, name])
-  @@index([hackathonId])
-  @@index([status])
-}
-
-// Note: SQLite doesn't support enums, using String instead
-
-model TeamMember {
-  id            String            @id @default(uuid())
-  teamId        String
-  team          Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  userId        String
-  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role          String            @default("MEMBER") // TeamMemberRole: LEADER, MEMBER
-  status        String            @default("PENDING") // TeamMemberStatus: PENDING, ACCEPTED, REJECTED
-  
-  // Timestamps
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  
-  @@unique([teamId, userId])
-  @@index([teamId])
-  @@index([userId])
-}
-
-// ============================================
-// SUBMISSION MANAGEMENT
-// ============================================
-// Note: SQLite doesn't support enums, using String instead
-
-model Submission {
-  id                String            @id @default(uuid())
-  hackathonId       String
-  hackathon         Hackathon         @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
-  
-  // Submitter
-  submitterId       String
-  submitter         User              @relation(fields: [submitterId], references: [id])
-  
-  // Team (if team submission)
-  teamId            String?
-  team              Team?             @relation(fields: [teamId], references: [id])
-  type              String            // SubmissionType: INDIVIDUAL, TEAM
-  
-  // Submission Content
-  title             String
-  description       String            // SQLite doesn't need @db.Text
-  repositoryUrl     String?
-  liveUrl           String?
-  videoUrl          String?
-  presentationUrl   String?
-  files             String            // JSON stored as String: Array of S3 file URLs
-  
-  // Status & Lifecycle
-  status            String            @default("DRAFT") // SubmissionStatus: DRAFT, SUBMITTED, etc.
-  isDraft           Boolean           @default(true)
-  isFinal           Boolean           @default(false)
-  
-  // AI Review Results
-  aiReviewResult    String?           // JSON stored as String: AI Analyzer output
-  aiMatchPercentage Float?
-  aiDecision        String?           // PASS_TO_OFFLINE_REVIEW, NEEDS_IMPROVEMENT, REJECTED
-  aiExplanation     String?           // SQLite doesn't need @db.Text
-  
-  // Offline Review Results
-  reviews           Review[]
-  finalScore        Float?
-  rank              Int?
-  
-  // Relations
-  notifications     Notification[]
-  
-  // Timestamps
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  submittedAt       DateTime?
-  reviewedAt        DateTime?
-  
-  @@index([hackathonId])
-  @@index([submitterId])
-  @@index([teamId])
-  @@index([status])
-  @@index([isDraft])
-}
-
-// ============================================
-// REVIEW MANAGEMENT
-// ============================================
-// Note: SQLite doesn't support enums, using String instead
-
-model Review {
-  id            String        @id @default(uuid())
-  submissionId  String
-  submission    Submission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  judgeId       String
-  judge         User          @relation(fields: [judgeId], references: [id])
-  
-  // Scoring
-  scores        String        // JSON stored as String: Criteria-based scores
-  totalScore    Float
-  comments      String?       // SQLite doesn't need @db.Text
-  status        String        @default("PENDING") // ReviewStatus: PENDING, IN_PROGRESS, COMPLETED
-  
-  // Timestamps
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  completedAt   DateTime?
-  
-  @@unique([submissionId, judgeId])
-  @@index([submissionId])
-  @@index([judgeId])
-  @@index([status])
-}
-
-// ============================================
-// NOTIFICATIONS
-// ============================================
-// Note: SQLite doesn't support enums, using String instead
-
-model Notification {
-  id            String            @id @default(uuid())
-  userId        String
-  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  hackathonId   String?
-  hackathon     Hackathon?        @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
-  submissionId  String?
-  submission    Submission?       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  
-  type          String            // NotificationType: HACKATHON_PUBLISHED, REGISTRATION_OPEN, etc.
-  title         String
-  message       String            // SQLite doesn't need @db.Text
-  status        String            @default("UNREAD") // NotificationStatus: UNREAD, READ, ARCHIVED
-  metadata      String?           // JSON stored as String
-  
-  // Timestamps
-  createdAt     DateTime          @default(now())
-  readAt        DateTime?
-  
-  @@index([userId])
-  @@index([status])
-  @@index([type])
-  @@index([createdAt])
-}
-
-// ============================================
-// ANALYTICS & AUDIT LOGS
-// ============================================
-// Note: SQLite doesn't support enums, using String instead
-
-model AuditLog {
-  id            String          @id @default(uuid())
-  userId        String?
-  user          User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  action        String          // AuditLogAction: CREATE, UPDATE, DELETE, LOGIN, etc.
-  entityType    String          // "Hackathon", "Submission", "Team", etc.
-  entityId      String?
-  changes       String?         // JSON stored as String
-  ipAddress     String?
-  userAgent     String?
-  
-  // Timestamps
-  createdAt     DateTime        @default(now())
-  
-  @@index([userId])
-  @@index([action])
-  @@index([entityType])
-  @@index([createdAt])
-}
-
-// ============================================
-// HACKATHON PARTICIPANT TRACKING
+// HACKATHON PARTICIPANT (SINGLE SOURCE OF TRUTH)
 // ============================================
 
 model HackathonParticipant {
-  id          String   @id @default(uuid())
-  hackathonId String
-  userId      String
-  joinedAt    DateTime @default(now())
-  hackathon Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String          @id @default(uuid())
+  
+  // Links
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  hackathonId   String
+  hackathon     Hackathon       @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // Optional team membership
+  teamId        String?
+  team          Team?           @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  
+  // Role in team (only relevant if teamId is set)
+  role          ParticipantRole @default(MEMBER)
+  
+  // Selected problem statement track (1-5)
+  selectedTrack Int?
+  
+  // Metadata
+  registeredAt  DateTime        @default(now())
+  
+  // Relations
+  individualSubmissions Submission[] @relation("IndividualSubmission")
 
-  @@unique([hackathonId, userId])
-  @@index([hackathonId])
-  @@index([userId])
+  // Constraints
+  @@unique([userId, hackathonId])
+  @@map("hackathon_participants")
 }
 
+// ============================================
+// TEAM MODEL (OPTIONAL, HACKATHON-SCOPED)
+// ============================================
+
+model Team {
+  id            String    @id @default(uuid())
+  name          String
+  description   String?
+  
+  // Belongs to one hackathon
+  hackathonId   String
+  hackathon     Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // Team leader
+  leaderId      String
+  leader        User      @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  members       HackathonParticipant[]
+  submissions   Submission[]           @relation("TeamSubmission")
+
+  @@map("teams")
+}
+
+// ============================================
+// SUBMISSION MODEL (UNIFIED: TEAM OR INDIVIDUAL)
+// ============================================
+
+model Submission {
+  id            String           @id @default(uuid())
+  title         String
+  description   String
+  demoUrl       String?
+  repoUrl       String?
+  status        SubmissionStatus @default(DRAFT)
+  
+  // Belongs to hackathon
+  hackathonId   String
+  hackathon     Hackathon        @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // EITHER team OR individual (one must be set)
+  teamId        String?
+  team          Team?            @relation("TeamSubmission", fields: [teamId], references: [id], onDelete: Cascade)
+  
+  participantId String?
+  participant   HackathonParticipant? @relation("IndividualSubmission", fields: [participantId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  submittedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  // Relations
+  files         SubmissionFile[]
+  reviews       Review[]
+
+  @@map("submissions")
+}
+
+// ============================================
+// SUBMISSION FILE (NEW MODEL - FILE METADATA ONLY)
+// ============================================
+
+model SubmissionFile {
+  id            String     @id @default(uuid())
+  
+  // Belongs to submission
+  submissionId  String
+  submission    Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  
+  // File metadata (NO raw file storage)
+  fileName      String
+  fileUrl       String     // URL to cloud storage (Azure/B2/S3)
+  fileType      String     // MIME type
+  fileSize      Int        // Size in bytes
+  
+  uploadedAt    DateTime   @default(now())
+
+  @@map("submission_files")
+}
+
+// ============================================
+// HACKATHON PROBLEM STATEMENT (NEW MODEL - ORGANIZER FILES)
+// ============================================
+
+model HackathonProblemStatement {
+  id            String    @id @default(uuid())
+  
+  // Belongs to hackathon
+  hackathonId   String
+  hackathon     Hackathon @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // Uploaded by organizer
+  uploadedById  String
+  uploadedBy    User      @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  
+  // Track information
+  trackNumber   Int       // Track number (1-5)
+  trackTitle    String    // Track title/name
+  
+  // File metadata (NO raw file storage)
+  fileName      String
+  fileUrl       String    // URL to cloud storage
+  fileType      String    // MIME type (PDF, PPT, DOC, etc.)
+  fileSize      Int       // Size in bytes
+  
+  // Optional description
+  description   String?
+  
+  uploadedAt    DateTime  @default(now())
+
+  @@unique([hackathonId, trackNumber])
+  @@map("hackathon_problem_statements")
+}
+
+// ============================================
+// REVIEW MODEL (EXISTING CONCEPT - EXTENDED)
+// ============================================
+
+model Review {
+  id            String     @id @default(uuid())
+  
+  // Links
+  submissionId  String
+  submission    Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  
+  reviewerId    String
+  reviewer      User       @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  
+  hackathonId   String
+  hackathon     Hackathon  @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // Review content
+  rating        Int        // 1-10 scale
+  feedback      String?
+  
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([submissionId, reviewerId])
+  @@map("reviews")
+}
+
+// ============================================
+// NOTIFICATION MODEL (EXISTING CONCEPT - EXTENDED)
+// ============================================
+
+model Notification {
+  id            String    @id @default(uuid())
+  
+  // Recipient
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Optional hackathon context
+  hackathonId   String?
+  hackathon     Hackathon? @relation(fields: [hackathonId], references: [id], onDelete: Cascade)
+  
+  // Notification content
+  type          String    // TEAM_INVITE, SUBMISSION_REVIEWED, etc.
+  title         String
+  message       String
+  isRead        Boolean   @default(false)
+  
+  createdAt     DateTime  @default(now())
+
+  @@map("notifications")
+}
